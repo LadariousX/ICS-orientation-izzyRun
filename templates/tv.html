@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>ICS - Izzy the Islander</title>
+    <link rel="stylesheet" href="/static/css/tv.css">
+</head>
+<body>
+<main class="tv-grid">
+
+    <section class="colLeft">
+        <span>
+            <div class="Q1">
+                <img src="/assets/img/ICS-Logo-Round-Words.svg" alt="" class="logo">
+                <img src="/assets/img/gameQR.png" class="gameQR" alt="">
+                <div style="display: flex; flex-direction: column; align-items: center;">
+                    <h1 style="font-size: 3rem; text-align: center;">Try out<br>our game!<br/>⬅</h1>
+                    <img src="/assets/img/izzy.png" alt="" class="izzy">
+                </div>
+            </div>
+        </span>
+        <div class="slideshow" id="slideshow">
+            <video class="slideshow__video" id="slideshow-video"
+                   src="/assets/slideshow/slideshowCompressed.mp4"
+                   autoplay muted loop playsinline preload="auto"></video>
+        </div>
+    </section>
+
+    <section class="colRight" id="leaderboard">
+        <h1 class="leaderboard__title">Future Islander Leaderboard</h1>
+        <ol class="leaderboard__list" id="leaderboard-list">
+            <li class="leaderboard__empty">Waiting for the first score...</li>
+        </ol>
+        <div class="IPInfo" id="IPInfo">
+            <div class="ipinfo__map">
+                <iframe id="ipinfo-map" src="about:blank" loading="lazy" title="Player location"></iframe>
+            </div>
+            <div class="ipinfo__details">
+                <div class="ipinfo__header">Recent players</div>
+                <p><span class="ipinfo__label">IP</span><span id="ipinfo-ip">—</span></p>
+                <p><span class="ipinfo__label">Host</span><span id="ipinfo-hostname">—</span></p>
+                <p><span class="ipinfo__label">ISP</span><span id="ipinfo-isp">—</span></p>
+                <p><span class="ipinfo__label">Where</span><span id="ipinfo-loc">Waiting for a player...</span></p>
+                <p><span class="ipinfo__label">Dist</span><span id="ipinfo-dist">—</span></p>
+            </div>
+        </div>
+
+    </section>
+
+<!--    <section class="col poster">
+        <img src="/assets/img/flyer.jpeg" alt="ICS poster" id="poster">
+    </section> -->
+</main>
+
+<script src="/static/js/tv.js"></script>
+</body>
+</html>

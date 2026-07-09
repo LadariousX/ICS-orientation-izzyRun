@@ -22,6 +22,7 @@ const (
 )
 
 type IPInfo struct {
+	Name     string  `json:"name"`
 	IP       string  `json:"ip"`
 	Hostname string  `json:"hostname"`
 	City     string  `json:"city"`
@@ -74,15 +75,17 @@ func getClientIP(r *http.Request) string {
 	return ip
 }
 
-// captureIP kicks off an async ip-api lookup and updates the current IPInfo.
-// Safe to call from a request handler — never blocks the response.
-func captureIP(ip string) {
+// captureIP kicks off an async ip-api lookup and updates the current IPInfo,
+// tagging it with the player's name. Safe to call from a request handler —
+// never blocks the response.
+func captureIP(ip, name string) {
 	go func() {
 		info, err := lookupIP(ip)
 		if err != nil {
 			log.Printf("geo lookup for %s: %v", ip, err)
 			info = IPInfo{IP: ip, Status: "error", Error: err.Error(), At: time.Now().Unix()}
 		}
+		info.Name = name
 		setCurrentIPInfo(info)
 	}()
 }

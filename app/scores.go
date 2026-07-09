@@ -63,28 +63,72 @@ func readScoresLocked() ([]Score, error) {
 	return out, nil
 }
 
-func appendScore(s Score) ([]Score, error) {
+// upsertScore records a play, keeping only the highest score per name. The
+// whole file is rewritten deduped, so legacy duplicate rows are collapsed the
+// first time anyone submits. Returns the deduped list and whether this play beat
+// the player's previous best (a new personal high score — true for a first play).
+func upsertScore(s Score) ([]Score, bool, error) {
 	scoresMu.Lock()
 	defer scoresMu.Unlock()
 
-	f, err := os.OpenFile(scoresFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	all, err := readScoresLocked()
 	if err != nil {
-		return nil, err
+		return nil, false, err
+	}
+
+	prevBest := -1
+	for _, x := range all {
+		if strings.EqualFold(strings.TrimSpace(x.Name), strings.TrimSpace(s.Name)) && x.Score > prevBest {
+			prevBest = x.Score
+		}
+	}
+	newHigh := s.Score > prevBest
+
+	merged := dedupeByName(append(all, s))
+	if err := writeScoresLocked(merged); err != nil {
+		return nil, false, err
+	}
+	return merged, newHigh, nil
+}
+
+func writeScoresLocked(all []Score) error {
+	f, err := os.OpenFile(scoresFile, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
 	}
 	w := csv.NewWriter(f)
-	if err := w.Write([]string{s.Name, strconv.Itoa(s.Score), strconv.FormatInt(s.At, 10)}); err != nil {
-		f.Close()
-		return nil, err
+	for _, s := range all {
+		if err := w.Write([]string{s.Name, strconv.Itoa(s.Score), strconv.FormatInt(s.At, 10)}); err != nil {
+			f.Close()
+			return err
+		}
 	}
 	w.Flush()
 	if err := w.Error(); err != nil {
 		f.Close()
-		return nil, err
+		return err
 	}
-	if err := f.Close(); err != nil {
-		return nil, err
+	return f.Close()
+}
+
+// dedupeByName collapses entries to one row per name (case-insensitive),
+// keeping each name's highest score. First-seen order is preserved; the final
+// ordering is decided by sortByScore at read time.
+func dedupeByName(all []Score) []Score {
+	best := make(map[string]int, len(all))
+	out := make([]Score, 0, len(all))
+	for _, s := range all {
+		key := strings.ToLower(strings.TrimSpace(s.Name))
+		if idx, ok := best[key]; ok {
+			if s.Score > out[idx].Score {
+				out[idx] = s // higher score wins; keep its display name + time
+			}
+			continue
+		}
+		best[key] = len(out)
+		out = append(out, s)
 	}
-	return readScoresLocked()
+	return out
 }
 
 func sortByScore(all []Score) {

@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>ICS - Izzy Run</title>
+    <link rel="stylesheet" href="/static/css/game.css">
+</head>
+<body>
+    <div class="stage" id="stage">
+        <div class="sky" id="sky"></div>
+
+        <div class="ground" id="ground"></div>
+        <img class="beach" id="beach" src="/assets/sprites/beach.png" alt="">
+
+        <img class="izzy" id="izzy" src="/assets/sprites/run.gif" alt="Izzy">
+
+        <div class="obstacles" id="obstacles"></div>
+
+        <div class="hud">
+            <div class="hud__score" id="score">0</div>
+        </div>
+
+        <div class="controls">
+            <button class="ctrl ctrl--up"   id="btn-up"   type="button" aria-label="Jump">
+                <img class="ctrl__arrow" src="/assets/sprites/arrow.png" alt="">
+            </button>
+            <button class="ctrl ctrl--down" id="btn-down" type="button" aria-label="Dive">
+                <img class="ctrl__arrow ctrl__arrow--flip" src="/assets/sprites/arrow.png" alt="">
+            </button>
+        </div>
+
+        <div class="landing" id="landing">
+            <div class="landing__bg" id="landing-bg">
+                <div class="landing__bg-strip" id="landing-bg-strip"></div>
+            </div>
+            <div class="landing__popup" id="landing-popup">
+                <h1 class="landing__title">ICS' Izzy Run</h1>
+                <p class="landing__sub">Enter your name to start</p>
+                <input class="landing__name" id="name-input" type="text"
+                       maxlength="20" placeholder="Your name"
+                       autocomplete="off" autocapitalize="words" spellcheck="false">
+                <p class="landing__error" id="name-error"></p>
+                <button class="landing__btn" id="btn-start" type="button">Start</button>
+                <p class="landing__hint">Tap ⬆ to jump, ⬇ to dive</p>
+            </div>
+        </div>
+
+        <div class="overlay overlay--gameover hidden" id="overlay-gameover">
+            <div class="overlay__card">
+                <h2 class="overlay__title">Game Over</h2>
+                <p class="overlay__body">Score: <span id="final-score">0</span></p>
+                <p class="overlay__body" id="rank-msg"></p>
+                <button class="overlay__btn" id="btn-restart" type="button">Play Again</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/game.js"></script>
+</body>
+</html>

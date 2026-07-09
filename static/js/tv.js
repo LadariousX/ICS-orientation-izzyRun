@@ -39,6 +39,7 @@
 
     function renderIPInfo(info) {
         if (!info || info.status !== "ok") {
+            setText("ipinfo-name",     info && info.name ? info.name : "—");
             setText("ipinfo-ip",       info && info.ip ? info.ip : "—");
             setText("ipinfo-hostname", "—");
             setText("ipinfo-isp",      "—");
@@ -47,6 +48,7 @@
             updateMap(null, null);
             return;
         }
+        setText("ipinfo-name",     info.name || "—");
         setText("ipinfo-ip",       info.ip || "—");
         setText("ipinfo-hostname", info.hostname || "N/A");
         setText("ipinfo-isp",      info.isp || info.org || "N/A");

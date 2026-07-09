@@ -20,6 +20,7 @@ func Register(mux *http.ServeMux) {
 	}
 	mux.HandleFunc("/tv", serveTemplate("tv.html"))
 	mux.HandleFunc("/game", handleGame)
+	mux.HandleFunc("/api/player", handlePlayer)
 	mux.HandleFunc("/api/scores", handleScores)
 	mux.HandleFunc("/api/scores/submit", handleSubmit)
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir(staticDir))))

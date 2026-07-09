@@ -1,0 +1,13 @@
+{
+  "width": 128,
+  "height": 128,
+  "frames": [
+    { "file": "000.png", "ms": 40 },
+    { "file": "001.png", "ms": 40 },
+    { "file": "002.png", "ms": 80 },
+    { "file": "003.png", "ms": 220 },
+    { "file": "004.png", "ms": 80 },
+    { "file": "005.png", "ms": 40 },
+    { "file": "006.png", "ms": 40 }
+  ]
+}

@@ -441,7 +441,7 @@
             state.nextSpawnIn -= dt;
             if (state.nextSpawnIn <= 0) {
                 spawnObstacle();
-                const min = Math.max(0.55, SPAWN_MIN_S - state.t * 0.01);
+                const min = Math.max(0.70, SPAWN_MIN_S - state.t * 0.01);
                 const max = Math.max(min + 0.2, SPAWN_MAX_S - state.t * 0.02);
                 state.nextSpawnIn = min + Math.random() * (max - min);
             }

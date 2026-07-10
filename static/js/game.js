@@ -302,11 +302,11 @@
     let landingTile = 0;        // px height of one rendered image tile (wrap period)
     let landingImgAspect = 0;   // naturalHeight / naturalWidth
     { const img = new Image();
-      img.onload = () => {
-          if (img.naturalWidth) landingImgAspect = img.naturalHeight / img.naturalWidth;
-          sizeLandingStrip();
-      };
-      img.src = "/assets/sprites/landing.png"; }
+        img.onload = () => {
+            if (img.naturalWidth) landingImgAspect = img.naturalHeight / img.naturalWidth;
+            sizeLandingStrip();
+        };
+        img.src = "/assets/sprites/landing.png"; }
 
     // With background-size: 100% auto the tile scales to the strip width, so the
     // vertical repeat period is width * aspect. Size the strip to the viewport
@@ -537,6 +537,8 @@
         rankMsgEl.textContent = "";
         goOverlay.classList.remove("hidden");
 
+        if (window.__rl && window.__rl.disableScoreSubmit) return;
+
         try {
             const res = await fetch("/api/scores/submit", {
                 method: "POST",
@@ -566,4 +568,70 @@
     { const img = new Image(); img.src = GAME_OVER_SRC; }
     computePxPerMeter();
     izzyEl.addEventListener("load", computePxPerMeter, { once: true });
+
+    // ---------- RL instrumentation ----------
+    // Everything below is additive and only touches game state through the
+    // same objects/functions the game itself uses. Safe to leave in for the
+    // deployed build — a human playing normally never triggers any of it.
+    window.__rl = {
+        disableScoreSubmit: false,
+
+        // Flat numeric state vector. Order is fixed — must match STATE_DIM
+        // and the preprocessing on the Python side.
+        getState() {
+            const z = state.izzy;
+            const izzyRect = izzyEl.getBoundingClientRect();
+            const originX = izzyRect.left;
+
+            const obs = state.obstacles; // already ordered by spawn = ascending distance
+            const o0 = obs[0] || null;
+            const o1 = obs[1] || null;
+
+            const dist0 = o0 ? (o0.xPx - originX) : 2000;
+            const dist1 = o1 ? (o1.xPx - originX) : 2000;
+
+            return [
+                z.y,
+                z.vy,
+                z.grounded ? 0 : 1,
+                state.input.down ? 1 : 0,
+                dist0,
+                o0 ? o0.wPx : 0,
+                o0 ? o0.hPx : 0,
+                o0 ? (o0.kind === "pelican" ? 1 : 0) : 0,
+                dist1,
+                state.speed,
+            ];
+        },
+
+        isDone() {
+            return state.dead;
+        },
+
+        isRunning() {
+            return state.running;
+        },
+
+        getScore() {
+            return state.score;
+        },
+
+        // First call must go through the real landing flow (name entry) —
+        // see dino_env.py. Every call after that is just this.
+        reset() {
+            startRun();
+        },
+
+        // action: 0 = noop, 1 = jump (self-clearing pulse), 2 = duck (held
+        // until a different action is applied)
+        applyAction(action) {
+            if (action === 1) {
+                state.input.up = true;
+                setTimeout(() => { state.input.up = false; }, 60);
+            } else {
+                state.input.up = false;
+            }
+            state.input.down = (action === 2);
+        },
+    };
 })();

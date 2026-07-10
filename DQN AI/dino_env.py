@@ -34,7 +34,7 @@ STATE_SCALE = np.array([
 
 class DinoEnv:
     def __init__(self, url: str, headless: bool = True, step_delay: float = 0.05,
-                 player_name: str = "rl-bot", disable_score_submit: bool = True,
+                 player_name: str = "Arthur Isaac", disable_score_submit: bool = True,
                  slow_mo: int = 0, playwright=None, browser=None):
         """
         By default launches its own Playwright + browser (fine for a single

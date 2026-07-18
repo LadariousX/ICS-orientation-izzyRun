@@ -1,9 +1,0 @@
-tunnel: <tunnel-id>
-credentials-file: /path/to/creds.json
-
-ingress:
-  - hostname: ics.laydenb.com
-    path: ^/ics-demo
-    service: http://localhost:8080
-  - hostname: ics.laydenb.com
-    service: http_status:404

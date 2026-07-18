@@ -4,8 +4,6 @@ Trains a small DQN (pure numpy + torch, no images) to play Izzy Run by
 reading real game state through a small hook added to `game.js`, then plays
 the deployed version using the same code path.
 
-## 1. Apply the game patch
-
 `game.rl-patched.js` is your `game.js` with one addition: a `window.__rl`
 object at the end of the closure exposing `getState()`, `isDone()`,
 `getScore()`, `reset()`, and `applyAction(action)`. It also adds one guard

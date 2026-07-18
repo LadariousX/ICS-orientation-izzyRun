@@ -9,6 +9,10 @@ Usage:
 
 import argparse
 import torch
+import os
+
+# Automatically changes the working directory to the script's actual folder
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 from dino_env import DinoEnv, STATE_DIM, N_ACTIONS
 from dqn import QNetwork
@@ -40,7 +44,9 @@ def main():
     )
 
     try:
-        for ep in range(args.episodes):
+        ep =0
+        while True:
+            ep = ep + 1
             state = env.reset()
             done = False
             while not done:

@@ -1,20 +1,23 @@
 package main
 
 import (
+	"fmt"
 	"log"
-	"net/http"
+	"os"
 
 	"ICS-tabling-demo/app"
+
+	"github.com/joho/godotenv"
 )
 
-const addr = ":8080"
-
 func main() {
-	mux := http.NewServeMux()
-	app.Register(mux)
-
-	log.Printf("listening on %s", addr)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	_ = godotenv.Load()
+	// override port in .env for perm. server deploy. use 8080 for local and RPi hosting
+	port, exists := os.LookupEnv("PORT")
+	if !exists {
+		port = "8080"
+	}
+	if err := app.Serve(fmt.Sprintf(":%s", port), ""); err != nil {
 		log.Fatal(err)
 	}
 }

@@ -28,9 +28,14 @@ import time
 import numpy as np
 import torch
 from playwright.async_api import async_playwright
+import os
+
+# Automatically changes the working directory to the script's actual folder
+os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 from dino_env import AsyncDinoEnv, DinoEnv, STATE_DIM, N_ACTIONS
 from dqn import QNetwork, ReplayBuffer, select_action, train_step
+
 
 def get_device():
     if torch.backends.mps.is_available():
@@ -156,7 +161,7 @@ async def _run_envs(args, shared):
         browser = await pw.chromium.launch(headless=True)
         envs = [
             AsyncDinoEnv(url=args.url, browser=browser, step_delay=args.step_delay,
-                         player_name=f"rl-bot-{i}")
+                         player_name=f"Arthur Isaac")
             for i in range(args.num_envs)
         ]
         tasks = [
@@ -192,7 +197,6 @@ def run_parallel(args):
 
 
 def run_show(args):
-    import matplotlib.pyplot as plt
 
     device = get_device()
     print(f"Using device: {device}  |  single visible env with live state plot")
@@ -220,33 +224,7 @@ def run_show(args):
     # this keeps working if you change QNetwork's architecture later.
     linear_layers = [m for m in q_net.net if isinstance(m, torch.nn.Linear)]
 
-    plt.ion()
-    fig, axes = plt.subplots(1, len(linear_layers), figsize=(4 * len(linear_layers), 4))
-    if len(linear_layers) == 1:
-        axes = [axes]
 
-    images = []
-    for ax, layer in zip(axes, linear_layers):
-        w = layer.weight.detach().cpu().numpy()
-        vmax = max(np.abs(w).max(), 1e-6)
-        im = ax.imshow(w, cmap="coolwarm", vmin=-vmax, vmax=vmax, aspect="auto")
-        ax.set_xlabel("input unit")
-        ax.set_ylabel("output unit")
-        fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        images.append(im)
-    fig.suptitle("Network weights (per layer)")
-    fig.tight_layout()
-
-    def update_weight_plot(title):
-        for im, layer in zip(images, linear_layers):
-            w = layer.weight.detach().cpu().numpy()
-            vmax = max(np.abs(w).max(), 1e-6)
-            im.set_data(w)
-            im.set_clim(-vmax, vmax)
-        fig.suptitle(title)
-        fig.canvas.draw_idle()
-        fig.canvas.flush_events()
-        plt.pause(0.001)
 
     episode = start_episode
     global_step = 0
@@ -273,10 +251,7 @@ def run_show(args):
                 # live update of the network's weight matrices -- only
                 # meaningfully changes after a train_step, but redrawing
                 # every env step is cheap enough here
-                update_weight_plot(
-                    f"episode {episode + 1}  score {info['score']}  "
-                    f"reward {reward:.2f}  eps {epsilon:.2f}"
-                )
+
 
             episode += 1
             scores.append(info["score"])

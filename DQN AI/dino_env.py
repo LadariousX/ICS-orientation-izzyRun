@@ -125,7 +125,7 @@ class AsyncDinoEnv:
     """
 
     def __init__(self, url: str, browser: AsyncBrowser, step_delay: float = 0.05,
-                 player_name: str = "rl-bot", disable_score_submit: bool = True):
+                 player_name: str = "Arthur Isaac", disable_score_submit: bool = True):
         self.url = url
         self.browser = browser
         self.step_delay = step_delay

@@ -1,9 +1,12 @@
 .env
 .idea
 .DS_Store
+.claude
 
 ICS-tabling-demo
 db/*
 .venv
+
+__pycache__
 
 DQN AI/README.md

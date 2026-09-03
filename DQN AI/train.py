@@ -25,6 +25,8 @@ import argparse
 import asyncio
 import threading
 import time
+import traceback
+from collections import deque
 import numpy as np
 import torch
 from playwright.async_api import async_playwright
@@ -52,14 +54,41 @@ def compute_epsilon(episode, args):
     )
 
 
-def save_checkpoint(path, q_net, optimizer, episode):
+def save_checkpoint(path, q_net, optimizer, episode, metric=None):
     torch.save({
         "model_state_dict": q_net.state_dict(),
         "optimizer_state_dict": optimizer.state_dict(),
         "episode": episode,
         "state_dim": STATE_DIM,
         "n_actions": N_ACTIONS,
+        "metric": metric,   # mean score over the promotion window, or None
     }, path)
+
+
+def read_best_metric(path):
+    """The promotion bar, read off the existing best checkpoint.
+
+    Kept on disk rather than in memory so that restarting training can't
+    silently reset the bar and let a weak policy reclaim best.pt.
+    """
+    if not os.path.exists(path):
+        return float("-inf")
+    try:
+        metric = torch.load(path, map_location="cpu").get("metric")
+    except Exception as e:
+        print(f"  (couldn't read metric from '{path}', treating as unset: {e})")
+        return float("-inf")
+    return float("-inf") if metric is None else float(metric)
+
+
+def archive_path(checkpoint_dir, high_score, when):
+    """Timestamped archive name carrying the window's high score.
+
+    The score leads so `ls` sorts the directory by how good the run got;
+    the timestamp keeps two equally-good windows from overwriting each other.
+    """
+    stamp = time.strftime("%Y%m%d-%H%M", time.localtime(when))
+    return os.path.join(checkpoint_dir, f"score{high_score}_{stamp}.pt")
 
 
 def load_checkpoint_into(path, q_net, target_net, optimizer, device):
@@ -86,7 +115,8 @@ def load_checkpoint_into(path, q_net, target_net, optimizer, device):
 class Shared:
     """Everything worker threads and the trainer thread touch concurrently."""
 
-    def __init__(self, device, buffer_size, lr, checkpoint_path, resume):
+    def __init__(self, device, buffer_size, lr, checkpoint_path, resume,
+                 best_path=None, metric_window=50):
         self.device = device
         self.q_net = QNetwork(STATE_DIM, N_ACTIONS).to(device)
         self.target_net = QNetwork(STATE_DIM, N_ACTIONS).to(device)
@@ -102,35 +132,89 @@ class Shared:
         self.buffer = ReplayBuffer(buffer_size, STATE_DIM)  # thread-safe internally
 
         self.lock = threading.Lock()   # guards episode_count / scores / net-sync
-        self.scores = []
+        # bounded: only the last `metric_window` scores are ever read, and an
+        # unbounded list is a slow leak in a run meant to stay up for weeks
+        self.scores = deque(maxlen=max(20, metric_window))
         self.train_steps = 0
+
+        # rolling archive window: high score seen since the last archive
+        self.window_start = time.time()
+        self.window_high = 0
+
+        # promotion bar for best.pt -- one-way, so a collapse can't take it
+        self.best_metric = read_best_metric(best_path) if best_path else float("-inf")
+        if self.best_metric > float("-inf"):
+            print(f"Best-checkpoint bar to beat: avg score {self.best_metric:.1f}")
 
 
 async def worker_loop(worker_id, env, shared, args, stop_event):
+    consecutive_failures = 0
+
     while not stop_event.is_set() and (args.max_episodes == 0 or shared.episode_count < args.max_episodes):
         with shared.lock:
             episode = shared.episode_count
         epsilon = compute_epsilon(episode, args)
 
-        state = await env.reset()
-        done = False
-        info = {"score": 0}
+        try:
+            state = await env.reset()
+            done = False
+            info = {"score": 0}
 
-        while not done and not stop_event.is_set():
-            # forward-pass inference; brief and fine to call directly from
-            # the event loop (the trainer thread updates weights
-            # concurrently -- see the staleness note in the README)
-            action = select_action(shared.q_net, state, epsilon, N_ACTIONS, shared.device)
-            next_state, reward, done, info = await env.step(action)
-            shared.buffer.push(state, action, reward, next_state, done)
-            state = next_state
+            while not done and not stop_event.is_set():
+                # forward-pass inference; brief and fine to call directly from
+                # the event loop (the trainer thread updates weights
+                # concurrently -- see the staleness note in the README)
+                action = select_action(shared.q_net, state, epsilon, N_ACTIONS, shared.device)
+                next_state, reward, done, info = await env.step(action)
+                shared.buffer.push(state, action, reward, next_state, done)
+                state = next_state
+        except Exception as e:
+            # A wedged or crashed tab shouldn't end a multi-day run. Rebuild
+            # it and drop this episode; the partial transitions already in the
+            # buffer are still valid experience.
+            consecutive_failures += 1
+            print(f"[worker {worker_id}] episode failed ({consecutive_failures}"
+                  f"/{args.max_worker_failures}): {type(e).__name__}: {e}")
+            if consecutive_failures >= args.max_worker_failures:
+                print(f"[worker {worker_id}] giving up -- browser likely gone, "
+                      f"letting the supervisor restart it")
+                raise
+            try:
+                await env.recycle()
+            except Exception:
+                pass
+            await asyncio.sleep(min(30, 2 ** consecutive_failures))
+            continue
+
+        consecutive_failures = 0
 
         with shared.lock:
             shared.episode_count += 1
             ep_num = shared.episode_count
             shared.scores.append(info["score"])
-            avg20 = float(np.mean(shared.scores[-20:]))
+            recent = list(shared.scores)
+            avg20 = float(np.mean(recent[-20:]))
             do_checkpoint = (ep_num % args.checkpoint_every == 0)
+
+            shared.window_high = max(shared.window_high, info["score"])
+            archive = None
+            if args.archive_every_hours > 0:
+                now = time.time()
+                if now - shared.window_start >= args.archive_every_hours * 3600:
+                    archive = archive_path(args.checkpoint_dir, shared.window_high, now)
+                    shared.window_start = now
+                    shared.window_high = 0
+
+            # Promote on the mean of a full window, not a single episode --
+            # one lucky run says nothing about the policy, and best.pt is
+            # what actually gets served.
+            promote = None
+            if (ep_num % args.promote_every == 0
+                    and len(shared.scores) >= args.metric_window):
+                metric = float(np.mean(recent[-args.metric_window:]))
+                if metric > shared.best_metric:
+                    promote = (metric, shared.best_metric)
+                    shared.best_metric = metric
 
         print(f"[worker {worker_id}] ep {ep_num:5d}  score {info['score']:4d}  "
               f"avg20 {avg20:6.1f}  eps {epsilon:.3f}  buffer {len(shared.buffer):6d}")
@@ -138,6 +222,17 @@ async def worker_loop(worker_id, env, shared, args, stop_event):
         if do_checkpoint:
             save_checkpoint(args.checkpoint, shared.q_net, shared.optimizer, ep_num)
             print(f"  saved checkpoint -> {args.checkpoint}")
+
+        if archive:
+            save_checkpoint(archive, shared.q_net, shared.optimizer, ep_num)
+            print(f"  archived {args.archive_every_hours}h window -> {archive}")
+
+        if promote:
+            metric, prev = promote
+            save_checkpoint(args.best_checkpoint, shared.q_net, shared.optimizer, ep_num, metric)
+            prev_str = "unset" if prev == float("-inf") else f"{prev:.1f}"
+            print(f"  NEW BEST avg{args.metric_window} {metric:.1f} (was {prev_str}) "
+                  f"-> {args.best_checkpoint}")
 
 
 def trainer_loop(shared, args, stop_flag):
@@ -147,8 +242,15 @@ def trainer_loop(shared, args, stop_flag):
         if len(shared.buffer) < args.batch_size:
             time.sleep(0.05)
             continue
-        train_step(shared.q_net, shared.target_net, shared.optimizer,
-                   shared.buffer, args.batch_size, args.gamma, shared.device)
+        try:
+            train_step(shared.q_net, shared.target_net, shared.optimizer,
+                       shared.buffer, args.batch_size, args.gamma, shared.device)
+        except Exception as e:
+            # If this thread dies the envs keep playing forever while nothing
+            # learns -- a silent failure that looks exactly like a healthy run.
+            print(f"[trainer] train_step failed, continuing: {type(e).__name__}: {e}")
+            time.sleep(1.0)
+            continue
         shared.train_steps += 1
         if shared.train_steps % args.target_sync_every == 0:
             with shared.lock:
@@ -161,7 +263,7 @@ async def _run_envs(args, shared):
         browser = await pw.chromium.launch(headless=True)
         envs = [
             AsyncDinoEnv(url=args.url, browser=browser, step_delay=args.step_delay,
-                         player_name=f"Arthur Isaac")
+                         player_name="Arthur Isaac", reload_every=args.reload_page_every)
             for i in range(args.num_envs)
         ]
         tasks = [
@@ -169,7 +271,12 @@ async def _run_envs(args, shared):
             for i in range(args.num_envs)
         ]
         try:
-            await asyncio.gather(*tasks)
+            # return_exceptions: one worker hitting its failure cap shouldn't
+            # cancel the healthy ones mid-episode
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            for i, r in enumerate(results):
+                if isinstance(r, Exception):
+                    print(f"[worker {i}] exited with {type(r).__name__}: {r}")
         finally:
             for env in envs:
                 await env.close()
@@ -180,13 +287,41 @@ def run_parallel(args):
     device = get_device()
     print(f"Using device: {device}  |  {args.num_envs} parallel envs (asyncio)")
 
-    shared = Shared(device, args.buffer_size, args.lr, args.checkpoint, resume=not args.fresh)
+    shared = Shared(device, args.buffer_size, args.lr, args.checkpoint, resume=not args.fresh,
+                    best_path=args.best_checkpoint, metric_window=args.metric_window)
     stop_flag = threading.Event()
     trainer_thread = threading.Thread(target=trainer_loop, args=(shared, args, stop_flag), daemon=True)
     trainer_thread.start()
 
+    # Supervisor: the model, optimizer, buffer and promotion bar all live in
+    # `shared`, outside the browser's lifetime -- so if Chromium itself dies we
+    # can relaunch the whole Playwright stack and carry on without losing
+    # training progress.
+    attempt = 0
     try:
-        asyncio.run(_run_envs(args, shared))
+        while True:
+            try:
+                asyncio.run(_run_envs(args, shared))
+            except KeyboardInterrupt:
+                raise
+            except Exception as e:
+                print(f"\nBrowser stack died: {type(e).__name__}: {e}")
+                traceback.print_exc()
+            else:
+                if args.max_episodes and shared.episode_count >= args.max_episodes:
+                    break
+                if not args.supervise:
+                    break
+
+            if not args.supervise:
+                break
+
+            attempt += 1
+            save_checkpoint(args.checkpoint, shared.q_net, shared.optimizer, shared.episode_count)
+            backoff = min(120, 5 * attempt)
+            print(f"Relaunching browser in {backoff}s (restart #{attempt}, "
+                  f"{shared.episode_count} episodes so far)")
+            time.sleep(backoff)
     except KeyboardInterrupt:
         print("\nInterrupted -- stopping workers and saving checkpoint")
     finally:
@@ -217,7 +352,7 @@ def run_show(args):
     # if this were a genuine deployment play session -- even though the
     # network is still training in the background on every step below.
     env = DinoEnv(url=args.url, headless=False, step_delay=args.step_delay,
-                  disable_score_submit=False)
+                  disable_score_submit=False, reload_every=args.reload_page_every)
 
     # One heatmap per nn.Linear layer in the network (weight matrix:
     # rows = output units, cols = input units). Discovered dynamically so
@@ -228,7 +363,12 @@ def run_show(args):
 
     episode = start_episode
     global_step = 0
-    scores = []
+    scores = deque(maxlen=max(20, args.metric_window))
+    window_start = time.time()
+    window_high = 0
+    best_metric = read_best_metric(args.best_checkpoint)
+    if best_metric > float("-inf"):
+        print(f"Best-checkpoint bar to beat: avg score {best_metric:.1f}")
 
     try:
         while args.max_episodes == 0 or episode < args.max_episodes:
@@ -255,11 +395,31 @@ def run_show(args):
 
             episode += 1
             scores.append(info["score"])
-            print(f"ep {episode:4d}  score {info['score']:4d}  avg20 {np.mean(scores[-20:]):6.1f}  eps {epsilon:.3f}")
+            recent = list(scores)
+            print(f"ep {episode:4d}  score {info['score']:4d}  "
+                  f"avg20 {np.mean(recent[-20:]):6.1f}  eps {epsilon:.3f}")
+
+            if episode % args.promote_every == 0 and len(scores) >= args.metric_window:
+                metric = float(np.mean(recent[-args.metric_window:]))
+                if metric > best_metric:
+                    prev_str = "unset" if best_metric == float("-inf") else f"{best_metric:.1f}"
+                    save_checkpoint(args.best_checkpoint, q_net, optimizer, episode, metric)
+                    print(f"  NEW BEST avg{args.metric_window} {metric:.1f} "
+                          f"(was {prev_str}) -> {args.best_checkpoint}")
+                    best_metric = metric
 
             if episode % args.checkpoint_every == 0:
                 save_checkpoint(args.checkpoint, q_net, optimizer, episode)
                 print(f"  saved checkpoint -> {args.checkpoint}")
+
+            window_high = max(window_high, info["score"])
+            now = time.time()
+            if args.archive_every_hours > 0 and now - window_start >= args.archive_every_hours * 3600:
+                archive = archive_path(args.checkpoint_dir, window_high, now)
+                save_checkpoint(archive, q_net, optimizer, episode)
+                print(f"  archived {args.archive_every_hours}h window -> {archive}")
+                window_start = now
+                window_high = 0
 
     except KeyboardInterrupt:
         print("\nInterrupted -- saving final checkpoint")
@@ -282,15 +442,42 @@ def main():
     ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--buffer-size", type=int, default=50_000)
     ap.add_argument("--eps-start", type=float, default=1.0)
-    ap.add_argument("--eps-end", type=float, default=0.05)
+    # 0.1 rather than 0.05: on an indefinite run the floor is where epsilon
+    # spends ~all of its life, and a policy that never explores trains only on
+    # its own recent behavior.
+    ap.add_argument("--eps-end", type=float, default=0.1)
     ap.add_argument("--eps-decay-episodes", type=int, default=800)
     ap.add_argument("--target-sync-every", type=int, default=500,
                      help="training steps between target-network syncs")
     ap.add_argument("--checkpoint", default="checkpoint.pt")
     ap.add_argument("--checkpoint-every", type=int, default=50, help="episodes")
+    ap.add_argument("--checkpoint-dir", default="checkpoints",
+                     help="directory for the periodic archived checkpoints")
+    ap.add_argument("--archive-every-hours", type=float, default=12.0,
+                     help="hours between archived checkpoints; 0 disables archiving")
+    ap.add_argument("--best-checkpoint", default=None,
+                     help="one-way 'best policy so far' checkpoint; this is the one to "
+                          "serve with play_prod.py (default: <checkpoint-dir>/best.pt)")
+    ap.add_argument("--metric-window", type=int, default=50,
+                     help="episodes averaged into the promotion metric")
+    ap.add_argument("--promote-every", type=int, default=25,
+                     help="episodes between promotion checks against best.pt")
+    ap.add_argument("--reload-page-every", type=int, default=200,
+                     help="rebuild each browser tab every N episodes to bound Chromium "
+                          "memory growth; 0 disables")
+    ap.add_argument("--max-worker-failures", type=int, default=5,
+                     help="consecutive failed episodes before a worker gives up and lets "
+                          "the supervisor relaunch the browser")
+    ap.add_argument("--no-supervise", dest="supervise", action="store_false",
+                     help="exit on a browser crash instead of relaunching (default is to "
+                          "relaunch, for unattended runs)")
     ap.add_argument("--fresh", action="store_true",
                      help="ignore any existing checkpoint at --checkpoint and start from scratch")
     args = ap.parse_args()
+
+    os.makedirs(args.checkpoint_dir, exist_ok=True)
+    if args.best_checkpoint is None:
+        args.best_checkpoint = os.path.join(args.checkpoint_dir, "best.pt")
 
     if args.show:
         args.num_envs = 1

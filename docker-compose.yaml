@@ -1,0 +1,29 @@
+services:
+  izzy-game:
+    image: izzy-game:v0
+    # nginx proxies to http://izzy-game:5003/ and needs this exact hostname.
+    container_name: izzy-game
+    environment:
+      # Trailing slash is required — it becomes <base href>. Unset it for dev.
+      - BASE_PATH=/ics/izzy-game/
+    volumes:
+      - ./db:/app/db
+    restart: unless-stopped
+    # No `ports:` — nginx reaches the app over shared-net; publishing 5003 would
+    # bypass the proxy. `default:` is listed only so the AI service can reach it.
+    networks:
+      default:
+      shared-net:
+
+#  izzy-game-AI:
+#    image: izzy-game-train-ai:v0
+#    volumes:
+#      # Quoted because of the space; relative for the same reason as above.
+#      - "./DQN AI/checkpoints:/checkpoints"
+#    restart: unless-stopped
+#    networks:
+#      - default
+
+networks:
+  shared-net:
+    external: true

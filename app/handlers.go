@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -22,23 +20,17 @@ func handleScores(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	all, err := readScores()
+	top, total, err := leaderboard()
 	if err != nil {
 		http.Error(w, "read scores", http.StatusInternalServerError)
 		log.Printf("read scores: %v", err)
 		return
 	}
-	all = dedupeByName(all)
-	sortByScore(all)
 	writeJSON(w, map[string]any{
-		"top":    topN(all, leaderboardN),
-		"total":  len(all),
+		"top":    top,
+		"total":  total,
 		"ipinfo": getCurrentIPInfo(),
 	})
-}
-
-func handleGame(w http.ResponseWriter, r *http.Request) {
-	http.ServeFile(w, r, filepath.Join(templatesDir, "game.html"))
 }
 
 // handlePlayer records the name the player entered on the landing screen and
@@ -97,29 +89,33 @@ func handleSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	entry := Score{Name: in.Name, Score: in.Score, At: time.Now().Unix()}
-	all, newHigh, err := upsertScore(entry)
+	best, newHigh, err := upsertScore(entry)
 	if err != nil {
 		http.Error(w, "write score", http.StatusInternalServerError)
 		log.Printf("upsert score: %v", err)
 		return
 	}
-	sortByScore(all)
 
-	// Rank by name — the player's stored entry is their best, which may predate
-	// this submission if they didn't beat it.
-	rank := 0
-	for i, s := range all {
-		if strings.EqualFold(strings.TrimSpace(s.Name), strings.TrimSpace(entry.Name)) {
-			rank = i + 1
-			break
-		}
+	// Rank the player's stored best, which may predate this submission if they
+	// didn't beat it.
+	rank, err := rankOf(best)
+	if err != nil {
+		http.Error(w, "read scores", http.StatusInternalServerError)
+		log.Printf("rank score: %v", err)
+		return
+	}
+	top, total, err := leaderboard()
+	if err != nil {
+		http.Error(w, "read scores", http.StatusInternalServerError)
+		log.Printf("read scores: %v", err)
+		return
 	}
 
 	writeJSON(w, submitResponse{
 		Rank:    rank,
 		Record:  rank == 1,
 		NewHigh: newHigh,
-		Top:     topN(all, leaderboardN),
-		Total:   len(all),
+		Top:     top,
+		Total:   total,
 	})
 }

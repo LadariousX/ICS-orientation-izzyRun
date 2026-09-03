@@ -1,3 +1,7 @@
+/* url() paths are relative to this stylesheet, not the document — "../../assets"
+   walks out of static/css/ and lands on the app root, so they keep working when
+   the game is mounted under a subpath. Do not restore leading slashes. */
+
 :root {
     --sky: #87ceeb;
     --sky-2: #62b8db;
@@ -43,7 +47,7 @@ html, body {
     right: 0;
     top: 0;
     bottom: var(--ground-h);
-    background-image: url("/assets/sprites/sky.png");
+    background-image: url("../../assets/sprites/sky.png");
     background-repeat: repeat-x;
     background-size: auto 100%;
     background-position: 0 0;
@@ -57,7 +61,7 @@ html, body {
     right: 0;
     bottom: 0;
     height: var(--ground-h);
-    background-image: url("/assets/sprites/water.png");
+    background-image: url("../../assets/sprites/water.png");
     background-repeat: repeat-x;
     background-size: auto 100%;
     background-position: 0 0;
@@ -279,7 +283,7 @@ html, body {
     left: 0;
     width: 100%;
     height: 100%;               /* JS overrides: viewport height + one tile */
-    background-image: url("/assets/sprites/landing.png");
+    background-image: url("../../assets/sprites/landing.png");
     background-repeat: repeat-y;
     background-size: 100% auto;
     background-position: 0 0;

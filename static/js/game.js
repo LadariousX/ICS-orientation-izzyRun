@@ -1,6 +1,13 @@
 (() => {
     "use strict";
 
+    // ---------- Mount point ----------
+    // The game may be served from a subpath (see BASE_PATH in app/server.go), so
+    // every URL built here is prefixed with BASE. It always ends in a slash, so
+    // suffixes must not start with one. A <base> tag covers the markup; it does
+    // not cover URLs constructed in JS, which is what this is for.
+    const BASE = window.BASE_PATH || "/";
+
     // ---------- Tunables ----------
     const GRAVITY = 9.8*1.6;                // m/s^2
     const JUMP_VELOCITY = 5.2;          // m/s at jump start
@@ -29,26 +36,26 @@
 
     // Static sprite srcs (GIFs used as fallback if frames.json is missing).
     const SPRITE = {
-        run:  "/assets/sprites/run.gif",
-        jump: "/assets/sprites/jump.gif",
-        dive: "/assets/sprites/dive.gif",
-        wave: "/assets/sprites/wave.png",
-        pelican: "/assets/sprites/pelican.png",
+        run:  BASE + "assets/sprites/run.gif",
+        jump: BASE + "assets/sprites/jump.gif",
+        dive: BASE + "assets/sprites/dive.gif",
+        wave: BASE + "assets/sprites/wave.png",
+        pelican: BASE + "assets/sprites/pelican.png",
     };
 
-    // Per-frame timing manifests loaded at boot from /assets/sprites/frames/<kind>/frames.json.
+    // Per-frame timing manifests loaded at boot from assets/sprites/frames/<kind>/frames.json.
     // Structure: { width, height, frames: [{file, ms}] }
     const frameSets = { run: null, dive: null };
 
     async function loadFrames(kind) {
         try {
-            const res = await fetch(`/assets/sprites/frames/${kind}/frames.json`, { cache: "no-store" });
+            const res = await fetch(`${BASE}assets/sprites/frames/${kind}/frames.json`, { cache: "no-store" });
             if (!res.ok) return;
             const data = await res.json();
             frameSets[kind] = data;
             for (const f of data.frames) {
                 const img = new Image();
-                img.src = `/assets/sprites/frames/${kind}/${f.file}`;
+                img.src = `${BASE}assets/sprites/frames/${kind}/${f.file}`;
             }
         } catch (_) { /* leave null → falls back to gif */ }
     }
@@ -57,7 +64,7 @@
     const SKY_PARALLAX = 0.25;
 
     // Death sprite (shown in-place of Izzy after collision).
-    const GAME_OVER_SRC = "/assets/sprites/game over.gif";
+    const GAME_OVER_SRC = BASE + "assets/sprites/game over.gif";
 
     // Landing screen scroll speeds (px/s of vertical background-position movement,
     // negative = image content scrolls UPWARD in the viewport).
@@ -131,7 +138,7 @@
         const set = frameSets[k];
         if (set && set.frames.length) {
             const f = set.frames[state.sprite.frameIdx];
-            izzyEl.src = `/assets/sprites/frames/${k}/${f.file}`;
+            izzyEl.src = `${BASE}assets/sprites/frames/${k}/${f.file}`;
             return;
         }
         // No manifest → fall back to gif with cache-buster to restart the animation.
@@ -247,7 +254,7 @@
         // for another. Network errors don't block play at the table.
         landingBusy = true;
         try {
-            const res = await fetch("/api/player", {
+            const res = await fetch(BASE + "api/player", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ name: raw }),
@@ -306,7 +313,7 @@
             if (img.naturalWidth) landingImgAspect = img.naturalHeight / img.naturalWidth;
             sizeLandingStrip();
         };
-        img.src = "/assets/sprites/landing.png"; }
+        img.src = BASE + "assets/sprites/landing.png"; }
 
     // With background-size: 100% auto the tile scales to the strip width, so the
     // vertical repeat period is width * aspect. Size the strip to the viewport
@@ -540,7 +547,7 @@
         if (window.__rl && window.__rl.disableScoreSubmit) return;
 
         try {
-            const res = await fetch("/api/scores/submit", {
+            const res = await fetch(BASE + "api/scores/submit", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ name: getPlayerName(), score: state.score }),

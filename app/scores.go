@@ -1,18 +1,33 @@
 package app
 
 import (
+	"database/sql"
 	"encoding/csv"
 	"errors"
+	"fmt"
+	"log"
 	"os"
-	"sort"
+	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
+
+	_ "modernc.org/sqlite"
 )
 
 const (
-	scoresFile   = "db/scores.csv"
+	dbFile = "db/scores.db"
+	// legacyCSV is the pre-SQLite store. It's imported once, on the first run
+	// against an empty table, then left on disk untouched.
+	legacyCSV    = "db/scores.csv"
 	leaderboardN = 5
+
+	schema = `CREATE TABLE IF NOT EXISTS scores (
+		name_key TEXT PRIMARY KEY,
+		name     TEXT    NOT NULL,
+		score    INTEGER NOT NULL,
+		at       INTEGER NOT NULL
+	);
+	CREATE INDEX IF NOT EXISTS scores_rank ON scores (score DESC, at ASC);`
 )
 
 type Score struct {
@@ -21,16 +36,63 @@ type Score struct {
 	At    int64  `json:"at"`
 }
 
-var scoresMu sync.Mutex
+var db *sql.DB
 
-func readScores() ([]Score, error) {
-	scoresMu.Lock()
-	defer scoresMu.Unlock()
-	return readScoresLocked()
+// openDB creates the db directory, opens db/scores.db, applies the schema, and
+// imports the legacy CSV if the table is still empty.
+//
+// One row per player, keyed on the lowercased name, so "keep each player's
+// highest score" is enforced by the primary key + UPSERT rather than by
+// rewriting and deduping the whole store on every submission. WAL plus a busy
+// timeout is what makes concurrent submissions from a room full of phones safe.
+func openDB() error {
+	if err := os.MkdirAll(filepath.Dir(dbFile), 0o755); err != nil {
+		return fmt.Errorf("create db dir: %w", err)
+	}
+	handle, err := sql.Open("sqlite", "file:"+dbFile+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
+	if err != nil {
+		return fmt.Errorf("open %s: %w", dbFile, err)
+	}
+	if err := handle.Ping(); err != nil {
+		return fmt.Errorf("ping %s: %w", dbFile, err)
+	}
+	if _, err := handle.Exec(schema); err != nil {
+		return fmt.Errorf("apply schema: %w", err)
+	}
+	db = handle
+	return importLegacyCSV()
 }
 
-func readScoresLocked() ([]Score, error) {
-	f, err := os.Open(scoresFile)
+// importLegacyCSV loads db/scores.csv into an empty scores table so the
+// leaderboard survives the move to SQLite. A non-empty table means the import
+// already happened, which makes this a no-op on every subsequent start.
+func importLegacyCSV() error {
+	var n int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM scores`).Scan(&n); err != nil {
+		return fmt.Errorf("count scores: %w", err)
+	}
+	if n > 0 {
+		return nil
+	}
+
+	rows, err := readLegacyCSV()
+	if err != nil {
+		return err
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	for _, s := range rows {
+		if _, _, err := upsertScore(s); err != nil {
+			return fmt.Errorf("import %q: %w", s.Name, err)
+		}
+	}
+	log.Printf("imported %d rows from %s into %s", len(rows), legacyCSV, dbFile)
+	return nil
+}
+
+func readLegacyCSV() ([]Score, error) {
+	f, err := os.Open(legacyCSV)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil, nil
@@ -41,12 +103,12 @@ func readScoresLocked() ([]Score, error) {
 
 	r := csv.NewReader(f)
 	r.FieldsPerRecord = -1
-	rows, err := r.ReadAll()
+	records, err := r.ReadAll()
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Score, 0, len(rows))
-	for _, row := range rows {
+	out := make([]Score, 0, len(records))
+	for _, row := range records {
 		if len(row) < 2 {
 			continue
 		}
@@ -63,86 +125,88 @@ func readScoresLocked() ([]Score, error) {
 	return out, nil
 }
 
-// upsertScore records a play, keeping only the highest score per name. The
-// whole file is rewritten deduped, so legacy duplicate rows are collapsed the
-// first time anyone submits. Returns the deduped list and whether this play beat
-// the player's previous best (a new personal high score — true for a first play).
-func upsertScore(s Score) ([]Score, bool, error) {
-	scoresMu.Lock()
-	defer scoresMu.Unlock()
+func nameKey(name string) string {
+	return strings.ToLower(strings.TrimSpace(name))
+}
 
-	all, err := readScoresLocked()
+// upsertScore records a play, keeping only the player's highest score. Returns
+// the player's stored best after the write and whether this play beat their
+// previous best (true for a first play).
+func upsertScore(s Score) (best Score, newHigh bool, err error) {
+	tx, err := db.Begin()
 	if err != nil {
-		return nil, false, err
+		return Score{}, false, err
 	}
+	defer tx.Rollback()
+
+	key := nameKey(s.Name)
 
 	prevBest := -1
-	for _, x := range all {
-		if strings.EqualFold(strings.TrimSpace(x.Name), strings.TrimSpace(s.Name)) && x.Score > prevBest {
-			prevBest = x.Score
-		}
+	err = tx.QueryRow(`SELECT score FROM scores WHERE name_key = ?`, key).Scan(&prevBest)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return Score{}, false, err
 	}
-	newHigh := s.Score > prevBest
+	newHigh = s.Score > prevBest
 
-	merged := dedupeByName(append(all, s))
-	if err := writeScoresLocked(merged); err != nil {
-		return nil, false, err
-	}
-	return merged, newHigh, nil
-}
-
-func writeScoresLocked(all []Score) error {
-	f, err := os.OpenFile(scoresFile, os.O_TRUNC|os.O_CREATE|os.O_WRONLY, 0o644)
+	// Display name and timestamp travel with the winning score, matching the old
+	// CSV dedupe ("higher score wins; keep its display name + time").
+	_, err = tx.Exec(`
+		INSERT INTO scores (name_key, name, score, at) VALUES (?, ?, ?, ?)
+		ON CONFLICT(name_key) DO UPDATE SET
+			name  = excluded.name,
+			score = excluded.score,
+			at    = excluded.at
+		WHERE excluded.score > scores.score`,
+		key, strings.TrimSpace(s.Name), s.Score, s.At)
 	if err != nil {
-		return err
+		return Score{}, false, err
 	}
-	w := csv.NewWriter(f)
-	for _, s := range all {
-		if err := w.Write([]string{s.Name, strconv.Itoa(s.Score), strconv.FormatInt(s.At, 10)}); err != nil {
-			f.Close()
-			return err
-		}
+
+	if err = tx.QueryRow(`SELECT name, score, at FROM scores WHERE name_key = ?`, key).
+		Scan(&best.Name, &best.Score, &best.At); err != nil {
+		return Score{}, false, err
 	}
-	w.Flush()
-	if err := w.Error(); err != nil {
-		f.Close()
-		return err
-	}
-	return f.Close()
+	return best, newHigh, tx.Commit()
 }
 
-// dedupeByName collapses entries to one row per name (case-insensitive),
-// keeping each name's highest score. First-seen order is preserved; the final
-// ordering is decided by sortByScore at read time.
-func dedupeByName(all []Score) []Score {
-	best := make(map[string]int, len(all))
-	out := make([]Score, 0, len(all))
-	for _, s := range all {
-		key := strings.ToLower(strings.TrimSpace(s.Name))
-		if idx, ok := best[key]; ok {
-			if s.Score > out[idx].Score {
-				out[idx] = s // higher score wins; keep its display name + time
-			}
-			continue
-		}
-		best[key] = len(out)
-		out = append(out, s)
+// leaderboard returns the top N players and the total number of players.
+func leaderboard() ([]Score, int, error) {
+	rows, err := db.Query(
+		`SELECT name, score, at FROM scores ORDER BY score DESC, at ASC LIMIT ?`,
+		leaderboardN)
+	if err != nil {
+		return nil, 0, err
 	}
-	return out
+	defer rows.Close()
+
+	top := make([]Score, 0, leaderboardN)
+	for rows.Next() {
+		var s Score
+		if err := rows.Scan(&s.Name, &s.Score, &s.At); err != nil {
+			return nil, 0, err
+		}
+		top = append(top, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+
+	var total int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM scores`).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	return top, total, nil
 }
 
-func sortByScore(all []Score) {
-	sort.SliceStable(all, func(i, j int) bool {
-		if all[i].Score != all[j].Score {
-			return all[i].Score > all[j].Score
-		}
-		return all[i].At < all[j].At
-	})
-}
-
-func topN(all []Score, n int) []Score {
-	if len(all) <= n {
-		return all
+// rankOf returns the 1-based leaderboard position of s, ordered by score
+// descending then earliest timestamp — the same ordering leaderboard() uses.
+func rankOf(s Score) (int, error) {
+	var ahead int
+	err := db.QueryRow(
+		`SELECT COUNT(*) FROM scores WHERE score > ? OR (score = ? AND at < ?)`,
+		s.Score, s.Score, s.At).Scan(&ahead)
+	if err != nil {
+		return 0, err
 	}
-	return all[:n]
+	return ahead + 1, nil
 }

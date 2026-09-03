@@ -35,26 +35,46 @@ STATE_SCALE = np.array([
 class DinoEnv:
     def __init__(self, url: str, headless: bool = True, step_delay: float = 0.05,
                  player_name: str = "Arthur Isaac", disable_score_submit: bool = True,
-                 slow_mo: int = 0, playwright=None, browser=None):
+                 slow_mo: int = 0, playwright=None, browser=None,
+                 reload_every: int = 0):
         """
         By default launches its own Playwright + browser (fine for a single
         env, e.g. play_prod.py). Pass an existing `playwright`/`browser` to
         share one Chromium process across many envs -- each still gets its
         own isolated context/page/cookies, just without the overhead of a
         separate browser process per env. See train.py's parallel mode.
+
+        reload_every: rebuild the tab from scratch every N episodes (0 =
+        never). A page driven for days by __rl.reset() alone accumulates JS
+        heap, so any run meant to stay up indefinitely wants this set.
         """
         self._owns_playwright = playwright is None
         self._owns_browser = browser is None
         self._pw = playwright or sync_playwright().start()
         self.browser = browser or self._pw.chromium.launch(headless=headless, slow_mo=slow_mo)
-        self.context = self.browser.new_context(viewport={"width": 1000, "height": 600})
-        self.page = self.context.new_page()
-        self.page.goto(url)
+        self.url = url
         self.step_delay = step_delay
         self.player_name = player_name
-        self._landed = False
         self._disable_score_submit = disable_score_submit
+        self.reload_every = reload_every
         self._last_score = 0
+        self._open_page()
+
+    def _open_page(self):
+        self.context = self.browser.new_context(viewport={"width": 1000, "height": 600})
+        self.page = self.context.new_page()
+        self.page.goto(self.url)
+        self._landed = False
+        self._episodes_since_load = 0
+
+    def recycle(self):
+        """Throw the tab away and build a fresh one. Doubles as the recovery
+        path when a page wedges or crashes mid-episode."""
+        try:
+            self.context.close()
+        except Exception:
+            pass
+        self._open_page()
 
     def _do_landing_once(self):
         """Fills the name field and clicks Start -- only needed the very
@@ -72,12 +92,16 @@ class DinoEnv:
         self._landed = True
 
     def reset(self) -> np.ndarray:
+        if self.reload_every and self._episodes_since_load >= self.reload_every:
+            self.recycle()
+
         if not self._landed:
             self._do_landing_once()
         else:
             self.page.evaluate("window.__rl.reset()")
             self.page.wait_for_function("() => window.__rl.isRunning()", timeout=5000)
 
+        self._episodes_since_load += 1
         self._last_score = 0
         return self._get_state()
 
@@ -125,22 +149,41 @@ class AsyncDinoEnv:
     """
 
     def __init__(self, url: str, browser: AsyncBrowser, step_delay: float = 0.05,
-                 player_name: str = "Arthur Isaac", disable_score_submit: bool = True):
+                 player_name: str = "Arthur Isaac", disable_score_submit: bool = True,
+                 reload_every: int = 0):
         self.url = url
         self.browser = browser
         self.step_delay = step_delay
         self.player_name = player_name
         self.disable_score_submit = disable_score_submit
+        self.reload_every = reload_every
         self.context = None
         self.page = None
         self._landed = False
         self._last_score = 0
+        self._episodes_since_load = 0
 
     async def _ensure_page(self):
         if self.page is None:
             self.context = await self.browser.new_context(viewport={"width": 1000, "height": 600})
             self.page = await self.context.new_page()
             await self.page.goto(self.url)
+            self._landed = False
+            self._episodes_since_load = 0
+
+    async def recycle(self):
+        """Drop the tab so the next reset() builds a fresh one -- both the
+        periodic memory reset and the crash-recovery path (see train.py's
+        worker_loop)."""
+        if self.context is not None:
+            try:
+                await self.context.close()
+            except Exception:
+                pass
+        self.context = None
+        self.page = None
+        self._landed = False
+        self._episodes_since_load = 0
 
     async def _do_landing_once(self):
         await self.page.wait_for_function("() => !!window.__rl", timeout=15000)
@@ -153,6 +196,9 @@ class AsyncDinoEnv:
         self._landed = True
 
     async def reset(self) -> np.ndarray:
+        if self.reload_every and self._episodes_since_load >= self.reload_every:
+            await self.recycle()
+
         await self._ensure_page()
         if not self._landed:
             await self._do_landing_once()
@@ -160,6 +206,7 @@ class AsyncDinoEnv:
             await self.page.evaluate("window.__rl.reset()")
             await self.page.wait_for_function("() => window.__rl.isRunning()", timeout=5000)
 
+        self._episodes_since_load += 1
         self._last_score = 0
         return await self._get_state()
 

@@ -1,0 +1,26 @@
+# The builder stage does `COPY . .`, so anything not excluded here is shipped
+# into the build context and invalidates the cached `go build` layer whenever it
+# changes — .git alone churns on every commit.
+
+.git
+.gitignore
+.idea
+.claude
+.DS_Store
+**/.DS_Store
+
+# Score store. Created by `mkdir -p /app/db` in the runtime stage and supplied
+# at run time by the ./db bind mount — baking a stale copy in would be a trap.
+db/
+
+# Python trainer: its own image, not part of the Go build.
+DQN AI/
+.venv
+__pycache__
+**/__pycache__
+
+# Docs and deploy descriptors the binary does not need.
+*.md
+Dockerfile
+docker-compose.yaml
+deploy/

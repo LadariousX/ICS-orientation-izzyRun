@@ -2,28 +2,33 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <!-- See game.html: asset URLs are relative to this mount point. -->
+    <base href="{{ .BasePath }}">
     <title>ICS - Izzy Run</title>
-    <link rel="stylesheet" href="/static/css/tv.css">
+    <link rel="stylesheet" href="static/css/tv.css">
+    <script>window.BASE_PATH = "{{ .BasePath }}";</script>
 </head>
 <body>
 <main class="tv-grid">
 
     <section class="colLeft">
-        <span>
-            <div class="Q1">
-                <img src="/assets/img/ICS-Logo-Round-Words.svg" alt="" class="logo">
+        <span class='Q1'>
+<!--             <div class="Q1"> -->
+                <img src="assets/img/ICS-Logo-Round-Words.svg" alt="" class="logo">
                 <div class="qr-wrap">
-                    <img src="/assets/img/gameQR.png" class="gameQR" alt="">
+                    <img src="assets/img/gameQR.png" class="gameQR" alt="">
                 </div>
                 <div style="display: flex; flex-direction: column; align-items: center;">
-                    <h1 style="font-size: 3rem; text-align: center;">Try out<br>our game!<br/>⬅</h1>
-                    <img src="/assets/img/izzy.png" alt="" class="izzy">
+                    <h1 style="font-size: 2rem; text-align: center;">Try out<br>our game!<br/>⬅</h1>
+                    <img src="assets/img/izzy.png" alt="" class="izzy">
                 </div>
-            </div>
+<!--             </div> -->
         </span>
         <div class="slideshow" id="slideshow">
+            <!-- Extension-less on purpose — a .mp4 URL is stolen by nginx's
+                 video regex block in production. See app/server.go. -->
             <video class="slideshow__video" id="slideshow-video"
-                   src="/assets/slideshow/slideshowCompressed.mp4"
+                   src="assets/slideshow/video"
                    autoplay muted loop playsinline preload="auto"></video>
         </div>
     </section>
@@ -51,10 +56,10 @@
     </section>
 
 <!--    <section class="col poster">
-        <img src="/assets/img/flyer.jpeg" alt="ICS poster" id="poster">
+        <img src="assets/img/flyer.jpeg" alt="ICS poster" id="poster">
     </section> -->
 </main>
 
-<script src="/static/js/tv.js"></script>
+<script src="static/js/tv.js"></script>
 </body>
 </html>

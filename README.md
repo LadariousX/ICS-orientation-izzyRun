@@ -4,10 +4,18 @@
 <img src="assets/img/tvSc.png" alt="game" height=300px>
 
 ## Compile & run site on localhost:8080
-If you want to deploy on a server, add a .env and assign it a `PORT=` for routing, otherwise do not enter a port as it defualts 8080.
 ```bash
 go run main.go
 ```
+
+Pass `-port` to listen somewhere else (defaults to 8080):
+```bash
+go run main.go -port 5003
+```
+
+Scores live in a SQLite database at `db/scores.db`, created on first run. If a legacy `db/scores.csv` is
+present and the database is empty, its rows are imported once on startup so an existing leaderboard carries
+over; the CSV itself is left on disk untouched.
 
 ## Start Cloudflare tunnel
 - Follow Cloudflare's guide on installing a tunnel
@@ -21,10 +29,14 @@ set +a
 cloudflared tunnel run
 ```
 
-The two pages should be accessible at `/tv` and `/game` respectively. The QR on the tv page in `assets/img/gameQR.png` is 
-wired to https://laydenb.com/ics/game. On arrival the page checks if the duplicate site over at https://ics.laydenb.com/game is 
-running and if not it will redirect to that page. This is the system used to keep games running on the RPi demo but have
-a permanent page as well.
+The game is served at the site root `/` and the TV dashboard at `/tv`. `/game` redirects to `/` so the printed
+QR code in `assets/img/gameQR.png`, which is wired to https://laydenb.com/ics/game, keeps working.
+
+Both pages use same-origin relative URLs, so the site can be served from any host or interface — localhost, a
+LAN address for phones on the venue wifi, or through the tunnel. The TV dashboard's "recent players" panel
+geolocates each player through ip-api. Players reaching the site over the local network have private IPs that
+ip-api can't resolve, so those fall back to the server's own public IP: the panel shows the venue's location
+(labelled "local network") instead of going blank.
 
 
 # AI player
@@ -47,15 +59,15 @@ playwright install chromium
 
 ## Run AI player (to be executed from the project root)
 ```bash
-python3 "DQN AI/play_prod.py" --url https://ics.laydenb.com/game
+python3 "DQN AI/play_prod.py" --url https://ics.laydenb.com/
 ```
 
 ### Train on site --show (my preferred demo)
 ```bash
-python3 "DQN AI/train.py" --url https://ics.laydenb.com/game --show
+python3 "DQN AI/train.py" --url https://ics.laydenb.com/ --show
 ```
 
 ### Train on localhost --show
 ```bash
-python3 "DQN AI/train.py" --url http://localhost:8080/game --show
+python3 "DQN AI/train.py" --url http://localhost:8080/ --show
 ```

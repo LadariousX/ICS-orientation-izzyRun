@@ -1,0 +1,3 @@
+- dockerfile 2 stage build for server
+- dockerfile py scrpt 
+- compse with server and AI

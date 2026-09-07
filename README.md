@@ -1,4 +1,5 @@
 # ICS-orientation-izzyRun
+### [Play the game here](https://laydenb.com/ics/izzy-game) or [take a look at the leaderboard](https://laydenb.com/ics/izzy-game/tv) 
 
 <img src="assets/img/gameScreenshot.png" alt="Izzy" height=300px>
 <img src="assets/img/tvSc.png" alt="game" height=300px>

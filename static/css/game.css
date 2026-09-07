@@ -379,6 +379,22 @@ html, body {
 
 .landing__btn:active { transform: translateY(2px); box-shadow: 0 2px 0 rgba(0,0,0,0.25); }
 
+.landing__btn2 {
+    text-decoration: none;
+    padding: 1vh 3vw;
+    font-size: clamp(10px, 2vh, 25px);
+    font-weight: 700;
+    color: #0d3a1e;
+    background: #26b55f;
+    border: 0;
+    border-radius: 999px;
+    cursor: pointer;
+    box-shadow: 0 4px 0 rgba(0,0,0,0.25);
+    transition: transform 0.05s;
+}
+
+.landing__btn2:active { transform: translateY(2px); box-shadow: 0 2px 0 rgba(0,0,0,0.25); }
+
 /* Force landscape on phones — if portrait, ask user to rotate. */
 @media (orientation: portrait) and (max-width: 900px) {
     .stage::after {

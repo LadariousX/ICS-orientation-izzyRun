@@ -1,6 +1,9 @@
 services:
   izzy-game:
+    # `image` tags the build so it can also be built by hand
+    # (docker build -t izzy-game:v0 .); `docker compose up --build` refreshes it.
     image: izzy-game:v0
+    build: .
     # nginx proxies to http://izzy-game:5003/ and needs this exact hostname.
     container_name: izzy-game
     environment:
